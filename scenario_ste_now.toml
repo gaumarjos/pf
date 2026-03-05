@@ -1,0 +1,45 @@
+# Simulation scenario inputs — edit this file, then re-run main.py.
+# Weights must sum to 1.0.  Set a weight to 0.0 to exclude an asset.
+
+[simulation]
+# "normal"    — log-normal GBM (standard assumption)
+# "student-t" — Student-t innovations with ν=6 (fatter tails, more realistic crashes)
+return_distribution = "normal"
+
+[capital]
+initial       = 43066.00
+contributions = [
+    36000.0, 36000.0, 36000.0, 36000.0, 36000.0,
+    36000.0, 36000.0, 36000.0, 36000.0, 36000.0,
+]   # one entry per year; length determines N_YEARS
+
+[weights]
+# ── Equity – US ───────────────────────────────────────────────────────────────
+IE000XZSV718 = 0.1517   # S&P 500 (cap-wtd)
+IE000MLMNYS0 = 0.0229   # S&P 500 (equal-wtd)
+
+# ── Equity – Developed ex-US ──────────────────────────────────────────────────
+IE000R4ZNTN3 = 0.1424   # MSCI World ex USA
+
+# ── Equity – Emerging Markets ─────────────────────────────────────────────────
+LU1681045370 = 0.0528   # MSCI Emerging Mkts
+
+# ── Equity – Global Factor ────────────────────────────────────────────────────
+IE00BJQRDN15 = 0.0782   # Global Multi-Factor
+IE00BP3QZB59 = 0.0207   # MSCI World Value
+IE00BP3QZ825 = 0.0203   # MSCI World Momentum
+IE00BP3QZ601 = 0.0206   # MSCI World Quality
+
+# ── Bonds ─────────────────────────────────────────────────────────────────────
+IE00BH04GL39 = 0.0501   # EUR Govt Bonds
+LU1650491282 = 0.1312   # EUR Inflation-Linked
+IE00BDBRDM35 = 0.2425   # Global Agg (EUR hdg)
+
+# ── Alternatives ──────────────────────────────────────────────────────────────
+IE00B4ND3602 = 0.0504   # Gold
+IE00BZ1NCS44 = 0.0162   # Broad Commodities
+
+# ── Scenario candidates (set > 0.0 to include; reduce other weights to compensate) ──
+LU2951555403 = 0.0000   # Managed Futures
+IE00B44Z5B48 = 0.0000   # MSCI ACWI
+IE00BMVB5R75 = 0.0000   # LifeStrategy 80/20

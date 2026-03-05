@@ -165,41 +165,16 @@ _wsum = df["weight"].sum()
 if abs(_wsum - 1.0) > 1e-4:
     raise ValueError(f"Weights in scenario.toml sum to {_wsum:.6f}, expected 1.0")
 
-df["name"] = [
-    "S&P 500 (cap-wtd)", "S&P 500 (equal-wtd)", "MSCI World ex USA",
-    "MSCI Emerging Mkts", "Global Multi-Factor", "MSCI World Value",
-    "MSCI World Momentum", "MSCI World Quality", "EUR Govt Bonds",
-    "EUR Inflation-Linked", "Global Agg (EUR hdg)", "Gold", "Broad Commodities",
-    "Managed Futures", "MSCI ACWI", "LifeStrategy 80/20",
-]
-df["etf"] = [
-    "SPDR S&P 500 UCITS ETF", "iShares S&P 500 Equal Weight UCITS ETF",
-    "iShares MSCI World ex-USA UCITS ETF", "Amundi MSCI Emerging Markets Swap ETF",
-    "Invesco Global Equity Multi-Factor ESG ETF", "iShares MSCI World Value Factor UCITS ETF",
-    "iShares MSCI World Momentum Factor UCITS ETF", "iShares MSCI World Quality Factor UCITS ETF",
-    "Vanguard EUR Eurozone Govt Bond UCITS ETF", "Amundi Euro Govt Inflation-Linked Bond ETF",
-    "iShares Core Global Aggregate Bond EUR Hdg ETF", "iShares Physical Gold ETC",
-    "iShares Bloomberg Roll Select Commodity ETF",
-    "iMGP DBi Managed Futures R EUR ETF", "SPDR MSCI ACWI UCITS ETF",
-    "Vanguard LifeStrategy 80% Equity UCITS ETF",
-]
-df["index"] = [
-    "S&P 500", "S&P 500 Equal Weight", "MSCI World ex USA", "MSCI Emerging Markets",
-    "IQS Global Multi-Factor (proprietary)", "MSCI World Enhanced Value",
-    "MSCI World Momentum", "MSCI World Sector Neutral Quality",
-    "Bloomberg Euro Aggregate Treasury", "Bloomberg Euro Govt Inflation-Linked",
-    "Bloomberg Global Aggregate (EUR hdg)", "Gold Spot", "Bloomberg Roll Select Commodity",
-    "iMGP DBi Managed Futures (CTA replication)", "MSCI All Country World (ACWI)",
-    "Vanguard LifeStrategy 80% Equity (fund-of-ETFs)",
-]
-df["asset_class"] = [
-    "Equity – US", "Equity – US", "Equity – Developed ex-US", "Equity – Emerging Markets",
-    "Equity – Global Factor", "Equity – Global Factor",
-    "Equity – Global Factor", "Equity – Global Factor",
-    "Bonds – EUR Govts", "Bonds – EUR Inflation-Linked", "Bonds – Global Aggregate",
-    "Alternatives – Gold", "Alternatives – Commodities",
-    "Alternatives – Managed Futures", "Equity – Global", "Multi-Asset – 80/20",
-]
+# ── Asset metadata from assets.toml (shared across all scenarios) ─────────────
+with open("assets.toml", "rb") as _f:
+    _assets = tomllib.load(_f)["assets"]
+
+_missing_meta = set(df.index) - set(_assets)
+if _missing_meta:
+    raise ValueError(f"assets.toml is missing metadata for ISINs: {_missing_meta}")
+
+for _col in ("name", "etf", "index", "asset_class"):
+    df[_col] = df.index.map(lambda isin, col=_col: _assets[isin][col])
 
 print("=" * 80)
 print("PORTFOLIO HOLDINGS")

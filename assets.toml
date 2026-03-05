@@ -1,0 +1,98 @@
+# Asset metadata — shared across all scenarios.
+# Keyed by ISIN.  Add a new [assets.ISIN] block when adding a new asset.
+
+[assets.IE000XZSV718]
+name        = "S&P 500 (cap-wtd)"
+etf         = "SPDR S&P 500 UCITS ETF"
+index       = "S&P 500"
+asset_class = "Equity – US"
+
+[assets.IE000MLMNYS0]
+name        = "S&P 500 (equal-wtd)"
+etf         = "iShares S&P 500 Equal Weight UCITS ETF"
+index       = "S&P 500 Equal Weight"
+asset_class = "Equity – US"
+
+[assets.IE000R4ZNTN3]
+name        = "MSCI World ex USA"
+etf         = "iShares MSCI World ex-USA UCITS ETF"
+index       = "MSCI World ex USA"
+asset_class = "Equity – Developed ex-US"
+
+[assets.LU1681045370]
+name        = "MSCI Emerging Mkts"
+etf         = "Amundi MSCI Emerging Markets Swap ETF"
+index       = "MSCI Emerging Markets"
+asset_class = "Equity – Emerging Markets"
+
+[assets.IE00BJQRDN15]
+name        = "Global Multi-Factor"
+etf         = "Invesco Global Equity Multi-Factor ESG ETF"
+index       = "IQS Global Multi-Factor (proprietary)"
+asset_class = "Equity – Global Factor"
+
+[assets.IE00BP3QZB59]
+name        = "MSCI World Value"
+etf         = "iShares MSCI World Value Factor UCITS ETF"
+index       = "MSCI World Enhanced Value"
+asset_class = "Equity – Global Factor"
+
+[assets.IE00BP3QZ825]
+name        = "MSCI World Momentum"
+etf         = "iShares MSCI World Momentum Factor UCITS ETF"
+index       = "MSCI World Momentum"
+asset_class = "Equity – Global Factor"
+
+[assets.IE00BP3QZ601]
+name        = "MSCI World Quality"
+etf         = "iShares MSCI World Quality Factor UCITS ETF"
+index       = "MSCI World Sector Neutral Quality"
+asset_class = "Equity – Global Factor"
+
+[assets.IE00BH04GL39]
+name        = "EUR Govt Bonds"
+etf         = "Vanguard EUR Eurozone Govt Bond UCITS ETF"
+index       = "Bloomberg Euro Aggregate Treasury"
+asset_class = "Bonds – EUR Govts"
+
+[assets.LU1650491282]
+name        = "EUR Inflation-Linked"
+etf         = "Amundi Euro Govt Inflation-Linked Bond ETF"
+index       = "Bloomberg Euro Govt Inflation-Linked"
+asset_class = "Bonds – EUR Inflation-Linked"
+
+[assets.IE00BDBRDM35]
+name        = "Global Agg (EUR hdg)"
+etf         = "iShares Core Global Aggregate Bond EUR Hdg ETF"
+index       = "Bloomberg Global Aggregate (EUR hdg)"
+asset_class = "Bonds – Global Aggregate"
+
+[assets.IE00B4ND3602]
+name        = "Gold"
+etf         = "iShares Physical Gold ETC"
+index       = "Gold Spot"
+asset_class = "Alternatives – Gold"
+
+[assets.IE00BZ1NCS44]
+name        = "Broad Commodities"
+etf         = "iShares Bloomberg Roll Select Commodity ETF"
+index       = "Bloomberg Roll Select Commodity"
+asset_class = "Alternatives – Commodities"
+
+[assets.LU2951555403]
+name        = "Managed Futures"
+etf         = "iMGP DBi Managed Futures R EUR ETF"
+index       = "iMGP DBi Managed Futures (CTA replication)"
+asset_class = "Alternatives – Managed Futures"
+
+[assets.IE00B44Z5B48]
+name        = "MSCI ACWI"
+etf         = "SPDR MSCI ACWI UCITS ETF"
+index       = "MSCI All Country World (ACWI)"
+asset_class = "Equity – Global"
+
+[assets.IE00BMVB5R75]
+name        = "LifeStrategy 80/20"
+etf         = "Vanguard LifeStrategy 80% Equity UCITS ETF"
+index       = "Vanguard LifeStrategy 80% Equity (fund-of-ETFs)"
+asset_class = "Multi-Asset – 80/20"

@@ -4,7 +4,42 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.patches import Patch
+from pathlib import Path
 from scipy.stats import norm, t as student_t
+
+
+# ── Simulation constants ───────────────────────────────────────────────────────
+N_SIMS    = 100_000
+RAND_SEED = 42
+STUDENT_T_NU = 6
+RF_RATE   = 0.025   # risk-free rate for Sharpe ratio
+
+
+# ── MC statistics helpers ──────────────────────────────────────────────────────
+
+def _max_drawdown_paths(paths: np.ndarray) -> np.ndarray:
+    """Return the maximum drawdown for each simulated path (shape: N_SIMS,).
+
+    Drawdown at step t = (peak_up_to_t - value_t) / peak_up_to_t.
+    """
+    running_max = np.maximum.accumulate(paths, axis=1)
+    drawdowns   = (running_max - paths) / running_max
+    return drawdowns.max(axis=1)
+
+
+def _ulcer_index_paths(paths: np.ndarray) -> np.ndarray:
+    """Return the Ulcer Index for each simulated path (shape: N_SIMS,).
+
+    UI = sqrt( mean( ((price - peak) / peak)^2 ) )
+    """
+    running_max = np.maximum.accumulate(paths, axis=1)
+    pct_drawdown = (running_max - paths) / running_max   # ≥ 0
+    return np.sqrt((pct_drawdown ** 2).mean(axis=1))
+
+
+def _cagr_paths(paths: np.ndarray, initial: float, n_years: int) -> np.ndarray:
+    """Annualised return for each simulated path."""
+    return (paths[:, -1] / initial) ** (1.0 / n_years) - 1.0
 
 
 # ── Plot helpers ──────────────────────────────────────────────────────────────
@@ -56,8 +91,9 @@ def plot_projection(
     initial_capital:  float,
     contributions:    np.ndarray,
     pcts:             list,
+    out_path:         str = "projection.png",
 ) -> None:
-    """Save fan chart and terminal-value histogram to projection.png."""
+    """Save fan chart and terminal-value histogram to *out_path*."""
     n_years        = len(contributions)
     years          = np.arange(1, n_years + 1)
     years_with_0   = np.concatenate([[0], years])
@@ -110,257 +146,329 @@ def plot_projection(
     ax2.legend(fontsize=8)
 
     plt.tight_layout()
-    plt.savefig("projection.png", dpi=150)
-    print("\nSaved: projection.png")
+    plt.savefig(out_path, dpi=150)
+    print(f"\nSaved: {out_path}")
     plt.close()
 
 
-# ── Simulation parameters ─────────────────────────────────────────────────────
-N_SIMS    = 100_000
-RAND_SEED = 42
 
-# ── Scenario inputs (scenario.toml) ─────────────────────────────────────────
-# Edit scenario.toml to change weights, initial capital, or contributions.
-# Capital config:
-#   initial       — current portfolio value (0 if starting fresh)
-#   contributions — one entry per year (annual total; length → N_YEARS)
-#     Monthly investors use annual total (e.g. €3k/month → €36k/year).
-#     Mid-year timing: each contribution earns (1+r)^0.5 in its arrival year
-#     (actuarial standard for uniform monthly cash-flows).
-# SCENARIO_FILE = "scenario_ste_mf.toml"
-# SCENARIO_FILE = "scenario_ste_mf.toml"
-SCENARIO_FILE = "scenario_edo_now.toml"
-with open(SCENARIO_FILE, "rb") as _f:
-    _scenario = tomllib.load(_f)
 
-INITIAL_CAPITAL = _scenario["capital"].get("initial", 0.0)
-CONTRIBUTIONS   = np.array(_scenario["capital"]["contributions"])
-N_YEARS         = len(CONTRIBUTIONS)
+# ── simulate() ────────────────────────────────────────────────────────────────
 
-_dist = _scenario.get("simulation", {}).get("return_distribution", "normal")
-if _dist not in ("normal", "student-t"):
-    raise ValueError(f"scenario.toml: return_distribution must be 'normal' or 'student-t', got '{_dist}'")
-RETURN_DIST = _dist
+def simulate(scenario_file: str) -> dict:
+    """Run a full portfolio simulation for *scenario_file* and return a stats dict.
 
-# ── Portfolio (single source of truth for holdings & metadata) ────────────────
-data = {
-    "isin": [
-        "IE000XZSV718", "IE000MLMNYS0", "IE000R4ZNTN3", "LU1681045370",
-        "IE00BJQRDN15", "IE00BP3QZB59", "IE00BP3QZ825", "IE00BP3QZ601",
-        "IE00BH04GL39", "LU1650491282", "IE00BDBRDM35",
-        "IE00B4ND3602", "IE00BZ1NCS44",
-        "LU2951555403", "IE00B44Z5B48", "IE00BMVB5R75",
-    ],
-}
+    Parameters
+    ----------
+    scenario_file : str
+        Path to a TOML scenario file (e.g. ``"scenarios/scenario_edo_now.toml"``).
 
-df = pd.DataFrame(data).set_index("isin")
+    Returns
+    -------
+    dict with keys:
 
-# ── Inject weights from scenario.toml ────────────────────────────────────────
-_weights = _scenario["weights"]
-_unknown = set(_weights) - set(df.index)
-if _unknown:
-    raise ValueError(f"scenario.toml references unknown ISINs: {_unknown}")
-df["weight"] = df.index.map(lambda isin: _weights.get(isin, 0.0))
-_wsum = df["weight"].sum()
-if abs(_wsum - 1.0) > 1e-4:
-    raise ValueError(f"Weights in scenario.toml sum to {_wsum:.6f}, expected 1.0")
+    Scenario / portfolio metadata
+        scenario_file, n_years, initial_capital, total_invested,
+        return_distribution, pf_return, pf_vol, pf_sharpe,
 
-# ── Asset metadata from assets.toml (shared across all scenarios) ─────────────
-with open("assets.toml", "rb") as _f:
-    _assets = tomllib.load(_f)["assets"]
+    Monte Carlo — terminal value percentiles
+        p05, p25, p50, p75, p95, mean,
 
-_missing_meta = set(df.index) - set(_assets)
-if _missing_meta:
-    raise ValueError(f"assets.toml is missing metadata for ISINs: {_missing_meta}")
+    Monte Carlo — terminal value ratios (relative to total invested)
+        p05_x, p25_x, p50_x, p75_x, p95_x, mean_x,
 
-for _col in ("name", "etf", "index", "asset_class"):
-    df[_col] = df.index.map(lambda isin, col=_col: _assets[isin][col])
+    Monte Carlo — path-level risk statistics (mean across sims)
+        cagr_p05, cagr_p25, cagr_p50, cagr_p75, cagr_p95, cagr_mean,
+        max_drawdown_p05, max_drawdown_p25, max_drawdown_p50,
+        max_drawdown_p75, max_drawdown_p95, max_drawdown_mean,
+        ulcer_index_p05, ulcer_index_p25, ulcer_index_p50,
+        ulcer_index_p75, ulcer_index_p95, ulcer_index_mean,
 
-print("=" * 80)
-print("PORTFOLIO HOLDINGS")
-print("=" * 80)
-print(df[["name", "etf", "index", "asset_class", "weight"]].to_string())
-print(f"\nTotal weight: {df['weight'].sum():.4f}")
+    Probabilities
+        prob_loss,          — P(terminal < total invested)
+        prob_loss_50pct,    — P(terminal < 0.5 × total invested)
+        prob_double,        — P(terminal > 2 × total invested)
 
-# ── Load model parameters from CSV ──────────────────────────────────────────
-# Edit vol.csv, corr.csv, mu.csv to update estimates — no code changes needed.
-# corr.csv stores the raw (intended) correlations; PSD projection is always
-# applied below so the matrix remains valid even after manual edits.
-_vol_df  = pd.read_csv("vol.csv",  index_col="isin")
-_corr_df = pd.read_csv("corr.csv", index_col="isin")
-_mu_df   = pd.read_csv("mu.csv",   index_col="isin")
+    Raw arrays (for further analysis / plotting)
+        terminal_values, paths, bands, pcts,
+        weights, mu_vec, vol_vec, corr_matrix, labels,
+    """
 
-_missing = set(df.index) - set(_vol_df.index)
-if _missing:
-    raise ValueError(f"vol.csv is missing ISINs: {_missing}")
+    # ── Load scenario ─────────────────────────────────────────────────────────
+    with open(scenario_file, "rb") as _f:
+        _scenario = tomllib.load(_f)
 
-vol = _vol_df.loc[df.index, "vol"].to_numpy()
-C   = _corr_df.loc[df.index, df.index].to_numpy()
-mu  = _mu_df.loc[df.index, "mu"].to_numpy()
+    initial_capital = _scenario["capital"].get("initial", 0.0)
+    contributions   = np.array(_scenario["capital"]["contributions"])
+    n_years         = len(contributions)
 
-print("\n" + "=" * 80)
-print("ANNUAL VOLATILITY VECTOR (long-run index estimates)")
-print("=" * 80)
-for name, v in zip(df["name"], vol):
-    print(f"  {name:<30}  {v*100:.1f}%")
+    _dist = _scenario.get("simulation", {}).get("return_distribution", "normal")
+    if _dist not in ("normal", "student-t"):
+        raise ValueError(
+            f"scenario.toml: return_distribution must be 'normal' or 'student-t', got '{_dist}'"
+        )
 
-# Project to nearest PSD matrix (clip negative eigenvalues → 0, rescale diagonal)
-vals, vecs = np.linalg.eigh(C)
-vals = np.clip(vals, 1e-8, None)
-C = vecs @ np.diag(vals) @ vecs.T
-d = np.sqrt(np.diag(C))
-C /= np.outer(d, d)
+    # ── Portfolio holdings ────────────────────────────────────────────────────
+    data = {
+        "isin": [
+            "IE000XZSV718", "IE000MLMNYS0", "IE000R4ZNTN3", "LU1681045370",
+            "IE00BJQRDN15", "IE00BP3QZB59", "IE00BP3QZ825", "IE00BP3QZ601",
+            "IE00BH04GL39", "LU1650491282", "IE00BDBRDM35",
+            "IE00B4ND3602", "IE00BZ1NCS44",
+            "LU2951555403", "IE00B44Z5B48", "IE00BMVB5R75",
+        ],
+    }
+    df = pd.DataFrame(data).set_index("isin")
 
-print(f"\nCorrelation matrix min eigenvalue after projection: {np.linalg.eigvalsh(C).min():.6f}  ✓ PSD")
+    _weights = _scenario["weights"]
+    _unknown = set(_weights) - set(df.index)
+    if _unknown:
+        raise ValueError(f"scenario.toml references unknown ISINs: {_unknown}")
+    df["weight"] = df.index.map(lambda isin: _weights.get(isin, 0.0))
+    _wsum = df["weight"].sum()
+    if abs(_wsum - 1.0) > 1e-4:
+        raise ValueError(f"Weights in scenario.toml sum to {_wsum:.6f}, expected 1.0")
 
-# ── Covariance matrix ─────────────────────────────────────────────────────────
-# Σ = D · C · D   where D = diag(σ)
-D = np.diag(vol)
-Sigma = D @ C @ D
+    with open("assets.toml", "rb") as _f:
+        _assets = tomllib.load(_f)["assets"]
+    _missing_meta = set(df.index) - set(_assets)
+    if _missing_meta:
+        raise ValueError(f"assets.toml is missing metadata for ISINs: {_missing_meta}")
+    for _col in ("name", "etf", "index", "asset_class"):
+        df[_col] = df.index.map(lambda isin, col=_col: _assets[isin][col])
 
-print("\n" + "=" * 80)
-print("COVARIANCE MATRIX (annual)")
-print("=" * 80)
-labels = df["name"].tolist()
-col_w = 22
-header = f"{'':>{col_w}}" + "".join(f"  {l[:10]:>10}" for l in labels)
-print(header)
-for i, row_label in enumerate(labels):
-    row = f"{row_label:>{col_w}}" + "".join(f"  {Sigma[i, j]:>10.6f}" for j in range(len(labels)))
-    print(row)
+    # ── Load model parameters ─────────────────────────────────────────────────
+    _vol_df  = pd.read_csv("vol.csv",  index_col="isin")
+    _corr_df = pd.read_csv("corr.csv", index_col="isin")
+    _mu_df   = pd.read_csv("mu.csv",   index_col="isin")
 
-# ── Plots ─────────────────────────────────────────────────────────────────────
-labels = df["name"].tolist()
-plot_correlation_matrix(C, labels)
-plot_volatility(vol, labels, df["asset_class"].tolist())
+    _missing = set(df.index) - set(_vol_df.index)
+    if _missing:
+        raise ValueError(f"vol.csv is missing ISINs: {_missing}")
 
-# ── Portfolio variance & volatility ───────────────────────────────────────────
-# σ_p² = wᵀ Σ w
-w = df["weight"].to_numpy()
-pf_variance = w @ Sigma @ w
-pf_vol      = np.sqrt(pf_variance)
+    vol = _vol_df.loc[df.index, "vol"].to_numpy()
 
-# Marginal risk contribution: MRC_i = (Σw)_i * w_i / σ_p
-marginal    = Sigma @ w
-risk_contrib = w * marginal / pf_vol          # absolute contribution to σ_p
-risk_pct     = risk_contrib / pf_vol * 100    # % of total variance explained
+    # corr.csv stores only the lower triangle; reconstruct the full symmetric matrix
+    _corr_raw = _corr_df.loc[df.index, df.index].to_numpy(dtype=float)
+    _i_upper  = np.triu_indices_from(_corr_raw, k=1)
+    _corr_raw[_i_upper] = _corr_raw.T[_i_upper]
+    C = _corr_raw
 
-print("\n" + "=" * 80)
-print("PORTFOLIO RISK SUMMARY")
-print("=" * 80)
-print(f"  Portfolio variance (σ²):   {pf_variance:.6f}")
-print(f"  Portfolio volatility (σ):  {pf_vol*100:.2f}%")
+    mu = _mu_df.loc[df.index, "mu"].to_numpy()
 
-print("\n  Risk contribution by asset:")
-print(f"  {'Asset':<30}  {'Weight':>8}  {'σ (ann)':>8}  {'RC (pp)':>8}  {'RC (%)':>8}")
-print("  " + "-" * 70)
-for i, (name, wi, vi, rci, rpci) in enumerate(
-        zip(df["name"], w, vol, risk_contrib, risk_pct)):
-    print(f"  {name:<30}  {wi*100:>7.2f}%  {vi*100:>7.1f}%  {rci*100:>7.2f}pp  {rpci:>7.2f}%")
-print("  " + "-" * 70)
-print(f"  {'TOTAL':<30}  {w.sum()*100:>7.2f}%  {'':>8}  {risk_contrib.sum()*100:>7.2f}pp  {risk_pct.sum():>7.2f}%")
+    # Project C to nearest PSD matrix (clip negative eigenvalues → 0)
+    vals, vecs = np.linalg.eigh(C)
+    vals = np.clip(vals, 1e-8, None)
+    C = vecs @ np.diag(vals) @ vecs.T
+    d = np.sqrt(np.diag(C))
+    C /= np.outer(d, d)
 
-# ── Expected returns loaded from mu.csv ──────────────────────────────────────
-# (building-block methodology documented in _gen_params.py)
-pf_return = w @ mu
+    # ── Portfolio-level analytics ─────────────────────────────────────────────
+    D     = np.diag(vol)
+    Sigma = D @ C @ D
+    w     = df["weight"].to_numpy()
 
-print("\n" + "=" * 80)
-print("EXPECTED RETURNS (nominal, EUR, annual)")
-print("=" * 80)
-print(f"  {'Asset':<30}  {'Weight':>8}  {'E[r]':>8}")
-print("  " + "-" * 52)
-for name, wi, mui in zip(df["name"], w, mu):
-    print(f"  {name:<30}  {wi*100:>7.2f}%  {mui*100:>7.2f}%")
-print("  " + "-" * 52)
-print(f"  {'PORTFOLIO':<30}  {w.sum()*100:>7.2f}%  {pf_return*100:>7.2f}%")
+    pf_variance = w @ Sigma @ w
+    pf_vol      = np.sqrt(pf_variance)
+    pf_return   = w @ mu
+    pf_sharpe   = (pf_return - RF_RATE) / pf_vol
 
-print("\n" + "=" * 80)
-print("RISK / RETURN SUMMARY")
-print("=" * 80)
-print(f"  Expected return (μ_p):     {pf_return*100:.2f}%")
-print(f"  Volatility (σ_p):          {pf_vol*100:.2f}%")
-print(f"  Sharpe ratio (rf=2.5%):    {(pf_return - 0.025)/pf_vol:.3f}")
+    # ── Analytical projection (no contributions, V0=1) ────────────────────────
+    mu_log  = pf_return - 0.5 * pf_vol**2
+    mu_T    = n_years * mu_log
+    sigma_T = pf_vol * np.sqrt(n_years)
+    pcts    = [5, 25, 50, 75, 95]
+    z_scores = norm.ppf([p / 100 for p in pcts])
+    analytical_terminals = np.exp(mu_T + sigma_T * z_scores)
+    analytical_mean      = np.exp(mu_T + 0.5 * sigma_T**2)
+    prob_loss_analytical = norm.cdf(-mu_T / sigma_T) * 100
 
-# ── Analytical projection (no contributions, normalised V0=1) ─────────────────
-# Terminal value is EXACTLY log-normal under the GBM / log-normal return model:
-#   log(V_T/V_0) ~ N(T·μ_log, T·σ²)
-# This holds because we model log-returns as normal (the standard assumption).
-# Arithmetic returns r_t are then approximately normal for small σ, but the
-# fundamental distributional claim lives in log-return space.
-# Once contributions are added the terminal value becomes a sum of correlated
-# log-normals — no closed form → Monte Carlo is the right tool.
-INITIAL = 1.0   # normalised reference for the analytical section
-mu_log  = pf_return - 0.5 * pf_vol**2   # annual log-drift (Itô correction)
-mu_T    = N_YEARS * mu_log
-sigma_T = pf_vol * np.sqrt(N_YEARS)      # σ·√T
+    # ── Monte Carlo with contributions ────────────────────────────────────────
+    rng = np.random.default_rng(RAND_SEED)
+    if _dist == "student-t":
+        _scale      = pf_vol / np.sqrt(STUDENT_T_NU / (STUDENT_T_NU - 2))
+        log_returns = mu_log + _scale * rng.standard_t(
+            df=STUDENT_T_NU, size=(N_SIMS, n_years)
+        )
+    else:
+        log_returns = rng.normal(loc=mu_log, scale=pf_vol, size=(N_SIMS, n_years))
 
-pcts    = [5, 25, 50, 75, 95]
-z_scores = norm.ppf([p / 100 for p in pcts])
-analytical_terminals = INITIAL * np.exp(mu_T + sigma_T * z_scores)
-analytical_mean      = INITIAL * np.exp(mu_T + 0.5 * sigma_T**2)
+    ret_factors = np.exp(log_returns)
 
-print("\n" + "=" * 80)
-print(f"ANALYTICAL PROJECTION — no contributions, V0=1  ({N_YEARS} years)")
-print("=" * 80)
-print(f"  μ_log = μ - ½σ²: {mu_log*100:.3f}%    "
-      f"T·μ_log: {mu_T*100:.2f}%    σ·√T: {sigma_T*100:.2f}%")
-print(f"  {'Percentile':<10}  {'Growth (×)':>12}  {'Total return':>13}")
-print("  " + "-" * 40)
-for p, v in zip(pcts, analytical_terminals):
-    print(f"  {str(p)+'th':<10}  {v:>12.4f}  {(v - 1)*100:>12.1f}%")
-print(f"  {'Mean':<10}  {analytical_mean:>12.4f}  {(analytical_mean - 1)*100:>12.1f}%")
-prob_loss_analytical = norm.cdf(-mu_T / sigma_T) * 100
-print(f"  Probability of loss after {N_YEARS}y: {prob_loss_analytical:.1f}%")
+    paths  = np.zeros((N_SIMS, n_years))
+    V      = np.full(N_SIMS, initial_capital, dtype=float)
+    for t in range(n_years):
+        rf = ret_factors[:, t]
+        V  = V * rf + contributions[t] * np.sqrt(rf)   # mid-year timing
+        paths[:, t] = V
 
-# ── Monte Carlo projection WITH contributions ─────────────────────────────────
-# Log-returns are drawn (consistent with the log-normal model):
-#   log(1+r_t) ~ N(μ_log, σ²)  →  terminal V_T is exactly log-normal (no contrib)
-# Student-t variant: t(ν=6) innovations rescaled to unit variance so σ_p is
-#   preserved.  Var(t_ν) = ν/(ν-2), so scale = σ_p / √(ν/(ν-2)).  The mean
-#   is still μ_log (t is symmetric, zero-mean before shift).
-#   Fat tails → lower 5th percentile, heavier left tail vs normal.
-# Mid-year contribution timing:
-#   V_t = V_{t-1}·(1+r_t) + C_t·(1+r_t)^0.5
-STUDENT_T_NU = 6
-rng = np.random.default_rng(RAND_SEED)
-if RETURN_DIST == "student-t":
-    _scale = pf_vol / np.sqrt(STUDENT_T_NU / (STUDENT_T_NU - 2))  # rescale to unit variance
-    log_returns = mu_log + _scale * rng.standard_t(df=STUDENT_T_NU, size=(N_SIMS, N_YEARS))
-else:
-    log_returns = rng.normal(loc=mu_log, scale=pf_vol, size=(N_SIMS, N_YEARS))
-ret_factors = np.exp(log_returns)                 # (1+r_t) from log-return draw
+    terminal     = paths[:, -1]
+    bands        = np.percentile(paths, pcts, axis=0)   # (5, n_years)
+    total_invested = initial_capital + contributions.sum()
 
-paths_contrib = np.zeros((N_SIMS, N_YEARS))
-V = np.full(N_SIMS, INITIAL_CAPITAL, dtype=float)
-for t in range(N_YEARS):
-    rf = ret_factors[:, t]
-    V  = V * rf + CONTRIBUTIONS[t] * np.sqrt(rf)   # mid-year: ×rf^0.5 = ×√rf
-    paths_contrib[:, t] = V
+    # ── Path-level risk statistics ────────────────────────────────────────────
+    # CAGR reference: use total_invested so the metric is meaningful even when
+    # initial_capital is 0 (pure contribution scenario).
+    _ref = total_invested
+    cagr          = _cagr_paths(paths, _ref, n_years)
+    max_dd        = _max_drawdown_paths(paths)
+    ulcer         = _ulcer_index_paths(paths)
 
-terminal_contrib = paths_contrib[:, -1]
-bands_contrib    = np.percentile(paths_contrib, pcts, axis=0)  # (5, N_YEARS)
+    def _pct_stats(arr: np.ndarray, name: str) -> dict:
+        return {
+            f"{name}_p05":  float(np.percentile(arr, 5)),
+            f"{name}_p25":  float(np.percentile(arr, 25)),
+            f"{name}_p50":  float(np.percentile(arr, 50)),
+            f"{name}_p75":  float(np.percentile(arr, 75)),
+            f"{name}_p95":  float(np.percentile(arr, 95)),
+            f"{name}_mean": float(arr.mean()),
+        }
 
-total_invested = INITIAL_CAPITAL + CONTRIBUTIONS.sum()
-_dist_label = f"Student-t (ν={STUDENT_T_NU})" if RETURN_DIST == "student-t" else "Normal"
-print("\n" + "=" * 80)
-print(f"MONTE CARLO WITH CONTRIBUTIONS  ({N_SIMS:,} sims, {N_YEARS} years, {_dist_label})")
-print("=" * 80)
-print(f"  Initial capital:       {INITIAL_CAPITAL:>12,.0f}")
-print(f"  Annual contributions:  {CONTRIBUTIONS.sum()/N_YEARS:>12,.0f}  (×{N_YEARS} years)")
-print(f"  Total invested:        {total_invested:>12,.0f}")
-print()
-print(f"  {'Percentile':<10}  {'Terminal':>14}  {'Total return':>13}  {'On invested':>12}")
-print("  " + "-" * 56)
-for p, v in zip(pcts, bands_contrib[:, -1]):
-    print(f"  {str(p)+'th':<10}  {v:>14,.0f}"
-          f"  {(v/total_invested - 1)*100:>12.1f}%"
-          f"  {'×'+f'{v/total_invested:.2f}':>12}")
-mc_mean = terminal_contrib.mean()
-print(f"  {'Mean':<10}  {mc_mean:>14,.0f}"
-      f"  {(mc_mean/total_invested - 1)*100:>12.1f}%"
-      f"  {'×'+f'{mc_mean/total_invested:.2f}':>12}")
-mc_prob_loss = (terminal_contrib < total_invested).mean() * 100
-print(f"\n  Probability that terminal value < total invested: {mc_prob_loss:.1f}%")
+    # ── Assemble results dict ─────────────────────────────────────────────────
+    results = {
+        # ── metadata ─────────────────────────────────────────────────────────
+        "scenario_file":       scenario_file,
+        "n_years":             n_years,
+        "initial_capital":     initial_capital,
+        "total_invested":      total_invested,
+        "return_distribution": _dist,
 
-# ── Plots ─────────────────────────────────────────────────────────────────────
-plot_projection(bands_contrib, terminal_contrib, INITIAL_CAPITAL, CONTRIBUTIONS, pcts)
+        # ── portfolio analytics ───────────────────────────────────────────────
+        "pf_return":  float(pf_return),
+        "pf_vol":     float(pf_vol),
+        "pf_sharpe":  float(pf_sharpe),
+
+        # ── MC terminal value — absolute ──────────────────────────────────────
+        "p05":  float(bands[-1, -1] if False else np.percentile(terminal, 5)),
+        "p25":  float(np.percentile(terminal, 25)),
+        "p50":  float(np.percentile(terminal, 50)),
+        "p75":  float(np.percentile(terminal, 75)),
+        "p95":  float(np.percentile(terminal, 95)),
+        "mean": float(terminal.mean()),
+
+        # ── MC terminal value — multiples of total invested ───────────────────
+        "p05_x":  float(np.percentile(terminal, 5)  / total_invested),
+        "p25_x":  float(np.percentile(terminal, 25) / total_invested),
+        "p50_x":  float(np.percentile(terminal, 50) / total_invested),
+        "p75_x":  float(np.percentile(terminal, 75) / total_invested),
+        "p95_x":  float(np.percentile(terminal, 95) / total_invested),
+        "mean_x": float(terminal.mean()             / total_invested),
+
+        # ── probabilities ─────────────────────────────────────────────────────
+        "prob_loss":       float((terminal < total_invested).mean() * 100),
+        "prob_loss_50pct": float((terminal < 0.5 * total_invested).mean() * 100),
+        "prob_double":     float((terminal > 2.0 * total_invested).mean() * 100),
+
+        # ── raw arrays ───────────────────────────────────────────────────────
+        "terminal_values": terminal,
+        "paths":           paths,
+        "bands":           bands,
+        "pcts":            pcts,
+        "weights":         w,
+        "mu_vec":          mu,
+        "vol_vec":         vol,
+        "corr_matrix":     C,
+        "labels":          df["name"].tolist(),
+        "asset_classes":   df["asset_class"].tolist(),
+        "contributions":   contributions,
+
+        # ── analytical (kept for reference) ──────────────────────────────────
+        "analytical_terminals":   analytical_terminals,
+        "analytical_mean":        float(analytical_mean),
+        "prob_loss_analytical":   float(prob_loss_analytical),
+    }
+
+    # ── path-level risk stats ─────────────────────────────────────────────────
+    results.update(_pct_stats(cagr,   "cagr"))
+    results.update(_pct_stats(max_dd, "max_drawdown"))
+    results.update(_pct_stats(ulcer,  "ulcer_index"))
+
+    return results
+
+
+# ── print helpers ─────────────────────────────────────────────────────────────
+
+def print_results(r: dict) -> None:
+    """Pretty-print the results dictionary returned by simulate()."""
+    sep = "=" * 80
+
+    print(f"\n{sep}")
+    print(f"SCENARIO: {r['scenario_file']}")
+    print(sep)
+    print(f"  Distribution:     {r['return_distribution']}")
+    print(f"  Years:            {r['n_years']}")
+    print(f"  Initial capital:  {r['initial_capital']:>14,.0f}")
+    print(f"  Total invested:   {r['total_invested']:>14,.0f}")
+
+    print(f"\n{sep}")
+    print("PORTFOLIO ANALYTICS")
+    print(sep)
+    print(f"  Expected return (μ):   {r['pf_return']*100:.2f}%")
+    print(f"  Volatility (σ):        {r['pf_vol']*100:.2f}%")
+    print(f"  Sharpe ratio (rf={RF_RATE*100:.1f}%): {r['pf_sharpe']:.3f}")
+
+    print(f"\n{sep}")
+    print(f"MONTE CARLO — TERMINAL VALUE  ({N_SIMS:,} sims, {r['n_years']} years)")
+    print(sep)
+    print(f"  {'Pct':<6}  {'Value':>14}  {'× invested':>12}  {'Total return':>13}")
+    print("  " + "-" * 52)
+    for lbl, key in [("5th", "p05"), ("25th", "p25"), ("50th", "p50"),
+                     ("75th", "p75"), ("95th", "p95"), ("Mean", "mean")]:
+        v = r[key]
+        print(f"  {lbl:<6}  {v:>14,.0f}  {r[key+'_x']:>12.2f}×  "
+              f"{(r[key+'_x']-1)*100:>12.1f}%")
+
+    print(f"\n{sep}")
+    print("MONTE CARLO — PATH RISK STATISTICS")
+    print(sep)
+    print(f"  {'Statistic':<20}  {'p05':>8}  {'p25':>8}  {'p50':>8}  {'p75':>8}  {'p95':>8}  {'mean':>8}")
+    print("  " + "-" * 68)
+    for label, key in [("CAGR", "cagr"), ("Max Drawdown", "max_drawdown"), ("Ulcer Index", "ulcer_index")]:
+        vals = [f"{r[f'{key}_{s}']*100:>7.1f}%" for s in ("p05", "p25", "p50", "p75", "p95", "mean")]
+        print(f"  {label:<20}  {'  '.join(vals)}")
+
+    print(f"\n{sep}")
+    print("MONTE CARLO — PROBABILITIES")
+    print(sep)
+    print(f"  P(terminal < total invested):        {r['prob_loss']:.1f}%")
+    print(f"  P(terminal < 50% of total invested): {r['prob_loss_50pct']:.1f}%")
+    print(f"  P(terminal > 2× total invested):     {r['prob_double']:.1f}%")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import sys
+
+    scenario = sys.argv[1] if len(sys.argv) > 1 else "scenarios/scenario_edo_now.toml"
+    r = simulate(scenario)
+
+    # Print portfolio metadata
+    labels       = r["labels"]
+    asset_classes = r["asset_classes"]
+    w            = r["weights"]
+    mu_vec       = r["mu_vec"]
+    vol_vec      = r["vol_vec"]
+    C            = r["corr_matrix"]
+
+    print("=" * 80)
+    print("ANNUAL VOLATILITY VECTOR")
+    print("=" * 80)
+    for name, v in zip(labels, vol_vec):
+        print(f"  {name:<30}  {v*100:.1f}%")
+
+    print(f"\nCorrelation matrix min eigenvalue: {np.linalg.eigvalsh(C).min():.6f}  ✓ PSD")
+
+    print_results(r)
+
+    # ── Plots ─────────────────────────────────────────────────────────────────
+    sim_dir = Path("simulations")
+    sim_dir.mkdir(exist_ok=True)
+    scenario_name = Path(scenario).stem          # e.g. "scenario_edo_now"
+    proj_path     = sim_dir / f"{scenario_name}__projection.png"
+
+    plot_correlation_matrix(C, labels)
+    plot_volatility(vol_vec, labels, asset_classes)
+    plot_projection(r["bands"], r["terminal_values"],
+                    r["initial_capital"], r["contributions"], r["pcts"],
+                    out_path=str(proj_path))

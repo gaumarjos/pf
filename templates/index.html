@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portfolio Simulator</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; }
+    .navbar-brand { font-weight: 700; letter-spacing: .04em; }
+    .param-label   { font-size: .78rem; font-weight: 600; color: #495057; text-transform: uppercase; letter-spacing: .05em; }
+    .stat-card     { border-left: 4px solid #0d6efd; }
+    .stat-card.green  { border-color: #198754; }
+    .stat-card.red    { border-color: #dc3545; }
+    .stat-card.amber  { border-color: #ffc107; }
+    .chart-img { width: 100%; border: 1px solid #dee2e6; border-radius: 6px; }
+    .pct-row td:first-child { font-weight: 600; }
+    table.tight td, table.tight th { padding: .3rem .6rem; font-size: .875rem; }
+    .section-title { font-weight: 700; font-size: 1rem; text-transform: uppercase;
+                     letter-spacing: .06em; color: #6c757d; margin-bottom: .75rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+  <div class="container-fluid">
+    <span class="navbar-brand">📈 Portfolio Monte Carlo Simulator</span>
+  </div>
+</nav>
+
+<div class="container-xl">
+
+  {# ── Parameter form ──────────────────────────────────────────────────────── #}
+  <form method="post" action="/run">
+    <div class="card shadow-sm mb-4">
+      <div class="card-header fw-semibold">Simulation Parameters</div>
+      <div class="card-body">
+
+        <div class="row g-3 align-items-end">
+
+          {# Scenario #}
+          <div class="col-12 col-md-4 col-lg-3">
+            <label class="param-label">Scenario</label>
+            <select name="scenario" class="form-select form-select-sm">
+              {% for s in scenarios %}
+                <option value="{{ s }}" {% if s == defaults.scenario %}selected{% endif %}>
+                  {{ s }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          {# N simulations #}
+          <div class="col-6 col-md-3 col-lg-2">
+            <label class="param-label">Simulations</label>
+            <select name="n_sims" class="form-select form-select-sm">
+              {% for n in [10000, 50000, 100000, 500000] %}
+                <option value="{{ n }}" {% if n == defaults.n_sims %}selected{% endif %}>
+                  {{ "{:,}".format(n) }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          {# Inflation #}
+          <div class="col-6 col-md-2 col-lg-2">
+            <label class="param-label">Inflation π (%)</label>
+            <input type="number" name="inflation" class="form-control form-control-sm"
+                   min="0" max="20" step="0.1"
+                   value="{{ "%.1f"|format(defaults.inflation) }}">
+          </div>
+
+          {# Risk-free rate #}
+          <div class="col-6 col-md-2 col-lg-2">
+            <label class="param-label">Risk-free rf (%)</label>
+            <input type="number" name="rf_rate" class="form-control form-control-sm"
+                   min="0" max="20" step="0.1"
+                   value="{{ "%.1f"|format(defaults.rf_rate) }}">
+          </div>
+
+          {# Student-t ν #}
+          <div class="col-6 col-md-2 col-lg-2">
+            <label class="param-label">Student-t ν</label>
+            <input type="number" name="student_t_nu" class="form-control form-control-sm"
+                   min="3" max="30" step="1"
+                   value="{{ defaults.student_t_nu }}">
+          </div>
+
+          {# Submit #}
+          <div class="col-12 col-lg-auto mt-2">
+            <button type="submit" class="btn btn-primary btn-sm px-4">
+              ▶ Run Simulation
+            </button>
+          </div>
+
+        </div>{# /row #}
+      </div>{# /card-body #}
+    </div>{# /card #}
+  </form>
+
+  {# ── Error ───────────────────────────────────────────────────────────────── #}
+  {% if error %}
+  <div class="alert alert-danger">
+    <strong>Error:</strong> {{ error }}
+  </div>
+  {% endif %}
+
+  {# ── Results ─────────────────────────────────────────────────────────────── #}
+  {% if results %}
+
+  {% set real = results.inflation > 0 %}
+  {% set tag  = "real (today's €, π=" ~ "%.1f"|format(results.inflation*100) ~ "%)"
+                if real else "nominal €" %}
+  {# ── Asset Allocation ────────────────────────────────────────────────── #}
+  <div class="card shadow-sm mb-3">
+    <div class="card-header fw-semibold">Asset Allocation</div>
+    <div class="card-body p-2">
+      <table class="table table-sm table-striped mb-0 tight">
+        <thead class="table-dark">
+          <tr><th>Asset</th><th>Class</th>
+              <th class="text-end">Weight</th>
+              <th class="text-end">μ (nom.)</th>
+              <th class="text-end">σ</th></tr>
+        </thead>
+        <tbody>
+          {% for i in range(results.asset_labels | length) %}
+          {% if results.weights[i] > 0.0001 %}
+          <tr>
+            <td>{{ results.asset_labels[i] }}</td>
+            <td class="text-muted">{{ results.asset_classes[i] }}</td>
+            <td class="text-end fw-semibold">{{ "%.1f"|format(results.weights[i]*100) }}%</td>
+            <td class="text-end">{{ "%.1f"|format(results.mu_vec[i]*100) }}%</td>
+            <td class="text-end">{{ "%.1f"|format(results.vol_vec[i]*100) }}%</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {# ── Row 1: scenario info + portfolio analytics + probabilities ──────────── #}
+  <div class="row g-3 mb-3">
+
+    {# Scenario info #}
+    <div class="col-12 col-md-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-header fw-semibold">Scenario</div>
+        <div class="card-body p-2">
+          <table class="table table-sm mb-0 tight">
+            <tr><td class="text-muted">File</td>
+                <td>{{ results.scenario_file | replace("scenarios/","") | replace(".toml","") }}</td></tr>
+            <tr><td class="text-muted">Distribution</td>
+                <td>{{ results.return_distribution }}</td></tr>
+            <tr><td class="text-muted">Horizon</td>
+                <td>{{ results.n_years }} years</td></tr>
+            <tr><td class="text-muted">Simulations</td>
+                <td>{{ "{:,}".format(results.n_sims) }}</td></tr>
+            <tr><td class="text-muted">Inflation π</td>
+                <td>{{ "%.1f"|format(results.inflation*100) }}%</td></tr>
+            <tr><td class="text-muted">Values in</td>
+                <td>{{ tag }}</td></tr>
+            <tr><td class="text-muted">Initial capital</td>
+                <td>{{ "{:,.0f}".format(results.initial_capital) }}</td></tr>
+            <tr><td class="text-muted">Total invested (real)</td>
+                <td>{{ "{:,.0f}".format(results.total_invested) }}</td></tr>
+            {% if real %}
+            <tr><td class="text-muted">Total invested (nom.)</td>
+                <td>{{ "{:,.0f}".format(results.total_invested_nom) }}</td></tr>
+            {% endif %}
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {# Portfolio analytics #}
+    <div class="col-12 col-md-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-header fw-semibold">Portfolio Analytics</div>
+        <div class="card-body p-2">
+          <table class="table table-sm mb-0 tight">
+            {% if real %}
+            <tr><td class="text-muted">μ nominal</td>
+                <td>{{ "%.2f"|format(results.pf_return_nom*100) }}%</td></tr>
+            <tr><td class="text-muted">μ real</td>
+                <td class="fw-semibold text-primary">{{ "%.2f"|format(results.pf_return*100) }}%</td></tr>
+            {% else %}
+            <tr><td class="text-muted">μ</td>
+                <td class="fw-semibold">{{ "%.2f"|format(results.pf_return*100) }}%</td></tr>
+            {% endif %}
+            <tr><td class="text-muted">σ (volatility)</td>
+                <td>{{ "%.2f"|format(results.pf_vol*100) }}%</td></tr>
+            {% if real %}
+            <tr><td class="text-muted">Sharpe nominal</td>
+                <td>{{ "%.3f"|format(results.pf_sharpe_nom) }}</td></tr>
+            <tr><td class="text-muted">Sharpe real</td>
+                <td class="fw-semibold text-primary">{{ "%.3f"|format(results.pf_sharpe) }}</td></tr>
+            {% else %}
+            <tr><td class="text-muted">Sharpe</td>
+                <td class="fw-semibold">{{ "%.3f"|format(results.pf_sharpe) }}</td></tr>
+            {% endif %}
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {# Probabilities #}
+    <div class="col-12 col-md-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-header fw-semibold">Probabilities</div>
+        <div class="card-body d-flex flex-column justify-content-around p-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="text-muted small">P(terminal &lt; invested)</span>
+            <span class="badge bg-danger fs-6">{{ "%.1f"|format(results.prob_loss) }}%</span>
+          </div>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="text-muted small">P(terminal &lt; 50% invested)</span>
+            <span class="badge bg-warning text-dark fs-6">{{ "%.1f"|format(results.prob_loss_50pct) }}%</span>
+          </div>
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="text-muted small">P(terminal &gt; 2× invested)</span>
+            <span class="badge bg-success fs-6">{{ "%.1f"|format(results.prob_double) }}%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>{# /row 1 #}
+
+  {# ── Row 2: terminal value table + path risk stats ───────────────────────── #}
+  <div class="row g-3 mb-3">
+
+    {# Terminal value table #}
+    <div class="col-12 col-md-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header fw-semibold">
+          Terminal Value — {{ "{:,}".format(results.n_sims) }} sims, {{ results.n_years }}y
+          <span class="text-muted fw-normal small">({{ tag }})</span>
+        </div>
+        <div class="card-body p-2">
+          <table class="table table-sm table-striped mb-0 tight pct-row">
+            <thead class="table-dark">
+              <tr><th>Pct</th><th class="text-end">Value (€)</th>
+                  <th class="text-end">× invested</th>
+                  <th class="text-end">Real return</th></tr>
+            </thead>
+            <tbody>
+              {% for lbl, key in [("5th","p05"),("25th","p25"),("50th","p50"),
+                                   ("75th","p75"),("95th","p95"),("Mean","mean")] %}
+              <tr>
+                <td>{{ lbl }}</td>
+                <td class="text-end">{{ "{:,.0f}".format(results[key]) }}</td>
+                <td class="text-end">{{ "%.2f"|format(results[key~"_x"]) }}×</td>
+                <td class="text-end
+                  {% if results[key~'_x'] >= 1 %}text-success{% else %}text-danger{% endif %}">
+                  {{ "%+.1f"|format((results[key~"_x"]-1)*100) }}%
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {# Path risk statistics #}
+    <div class="col-12 col-md-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header fw-semibold">
+          Path Risk Statistics
+          <span class="text-muted fw-normal small">({{ tag }})</span>
+        </div>
+        <div class="card-body p-2">
+          <table class="table table-sm table-striped mb-0 tight">
+            <thead class="table-dark">
+              <tr><th>Statistic</th>
+                  <th class="text-end">p05</th><th class="text-end">p25</th>
+                  <th class="text-end">p50</th><th class="text-end">p75</th>
+                  <th class="text-end">p95</th><th class="text-end">mean</th></tr>
+            </thead>
+            <tbody>
+              {% for label, key in [("CAGR (real)","cagr"),
+                                     ("Max Drawdown","max_drawdown"),
+                                     ("Ulcer Index","ulcer_index")] %}
+              <tr>
+                <td>{{ label }}</td>
+                {% for s in ["p05","p25","p50","p75","p95","mean"] %}
+                <td class="text-end">{{ "%.1f"|format(results[key~"_"~s]*100) }}%</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>{# /row 2 #}
+
+  {# ── Row 3: projection chart ───────────────────────────────────────── #}
+  <div class="card shadow-sm mb-3">
+    <div class="card-header fw-semibold">Projection — Fan Chart &amp; Terminal Distribution</div>
+    <div class="card-body p-2">
+      <img class="chart-img"
+           src="data:image/png;base64,{{ charts.projection }}"
+           alt="Projection chart">
+    </div>
+  </div>
+
+  {% endif %}{# /results #}
+
+</div>{# /container #}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

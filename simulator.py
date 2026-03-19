@@ -386,4 +386,8 @@ if __name__ == "__main__":
     sim_dir       = Path("simulations")
     sim_dir.mkdir(exist_ok=True)
     scenario_name = Path(scenario).stem
-    save_charts(r, proj_path=str(sim_dir / f"{scenario_name}__projection.png"))
+    save_charts(
+        r,
+        fan_path=str(sim_dir / f"{scenario_name}__fan.png"),
+        dist_path=str(sim_dir / f"{scenario_name}__distribution.png"),
+    )

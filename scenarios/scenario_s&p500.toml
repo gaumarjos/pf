@@ -1,0 +1,16 @@
+# Simulation scenario inputs — edit this file, then re-run simulator.py.
+# Weights must sum to 1.0.  Set a weight to 0.0 to exclude an asset.
+
+[simulation]
+
+[capital]
+initial       = 43066.00
+contributions = [
+    36000.0, 36000.0, 36000.0, 36000.0, 36000.0,
+    36000.0, 36000.0, 36000.0, 36000.0, 36000.0,
+]   # one entry per year; length determines N_YEARS
+
+[weights]
+# ── Equity – US ───────────────────────────────────────────────────────────────
+IE000XZSV718 = 1.0000   # S&P 500 (cap-wtd)
+IE000MLMNYS0 = 0.0000   # S&P 500 (equal-wtd)

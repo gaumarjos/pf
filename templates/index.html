@@ -297,13 +297,27 @@
 
   </div>{# /row 2 #}
 
-  {# ── Row 3: projection chart ───────────────────────────────────────── #}
-  <div class="card shadow-sm mb-3">
-    <div class="card-header fw-semibold">Projection — Fan Chart &amp; Terminal Distribution</div>
-    <div class="card-body p-2">
-      <img class="chart-img"
-           src="data:image/png;base64,{{ charts.projection }}"
-           alt="Projection chart">
+  {# ── Row 3: fan chart + distribution side by side ─────────────────── #}
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-xl-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header fw-semibold">Fan Chart</div>
+        <div class="card-body p-2">
+          <img class="chart-img"
+               src="data:image/png;base64,{{ charts.fan }}"
+               alt="Fan chart">
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header fw-semibold">Terminal Value Distribution</div>
+        <div class="card-body p-2">
+          <img class="chart-img"
+               src="data:image/png;base64,{{ charts.distribution }}"
+               alt="Terminal value distribution">
+        </div>
+      </div>
     </div>
   </div>
 

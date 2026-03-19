@@ -83,7 +83,8 @@ def run():
 
     # ── Generate charts ────────────────────────────────────────────────────────
     chart_data = {
-        "projection": charts.chart_projection(r),
+        "fan":          charts.chart_fan(r),
+        "distribution": charts.chart_distribution(r),
     }
 
     # Convert numpy arrays to plain Python so Jinja2 can iterate them

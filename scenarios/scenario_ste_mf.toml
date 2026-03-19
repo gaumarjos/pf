@@ -35,8 +35,4 @@ IE00BDBRDM35 = 0.2425   # Global Agg (EUR hdg)
 # ── Alternatives ──────────────────────────────────────────────────────────────
 IE00B4ND3602 = 0.0333   # Gold
 IE00BZ1NCS44 = 0.0000   # Broad Commodities
-
-# ── Scenario candidates (set > 0.0 to include; reduce other weights to compensate) ──
 LU2951555403 = 0.0333   # Managed Futures
-IE00B44Z5B48 = 0.0000   # MSCI ACWI
-IE00BMVB5R75 = 0.0000   # LifeStrategy 80/20

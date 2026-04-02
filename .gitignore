@@ -4,3 +4,5 @@ __pycache__/
 tr/account_transactions.csv
 tr/portfolio.csv
 tr/all_events.json
+montecarlo/scenarios/*.toml
+!montecarlo/scenarios/scenario_template.toml

@@ -1,0 +1,16 @@
+# Simulation scenario inputs — edit this file, then re-run simulator.py.
+# Weights must sum to 1.0.  Set a weight to 0.0 to exclude an asset.
+
+[simulation]
+# return_distribution = "normal"   # or "student-t"
+
+[capital]
+initial       = 0.0
+contributions = [
+    0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0,
+]   # one entry per year; length determines N_YEARS
+
+[weights]
+IE000XZSV718 = 1.0000   # S&P 500 (cap-wtd)
+

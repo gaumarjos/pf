@@ -1,2 +1,6 @@
 .vscode/
 __pycache__/
+.python-version
+tr/account_transactions.csv
+tr/portfolio.csv
+tr/all_events.json

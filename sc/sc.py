@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import requests
 import pandas as pd
 from dotenv import load_dotenv
 from scipy.optimize import brentq
@@ -10,10 +11,27 @@ load_dotenv(os.path.join(SC_DIR, "..", ".env"))
 
 ACCOUNT_ID = os.environ["ACCOUNT_ID"]
 PORTFOLIO_ID = os.environ["PORTFOLIO_ID"]
+SC_BASE_URL = "https://de.scalable.capital"
+SC_TOKEN = os.environ.get("SC_TOKEN")  # TODO: find where the CLI stores the auth token
 
 
 def _path(filename: str) -> str:
     return os.path.join(SC_DIR, filename)
+
+
+def download_document(doc_id: str, label: str, output_dir: str = "documents") -> str:
+    if not SC_TOKEN:
+        raise RuntimeError("SC_TOKEN not set in .env — auth token still pending")
+    os.makedirs(_path(output_dir), exist_ok=True)
+    url = f"{SC_BASE_URL}/api/download?id={doc_id}"
+    response = requests.get(url, headers={"Authorization": f"Bearer {SC_TOKEN}"})
+    response.raise_for_status()
+    ext = response.headers.get("Content-Type", "").split("/")[-1].split(";")[0] or "bin"
+    filename = f"{label.replace(' ', '_')}_{doc_id}.{ext}"
+    filepath = _path(os.path.join(output_dir, filename))
+    with open(filepath, "wb") as f:
+        f.write(response.content)
+    return filepath
 
 
 def run_sc_command(command: str, output_file: str) -> None:
@@ -86,11 +104,14 @@ def irr(holdings_df: pd.DataFrame, transactions_df: pd.DataFrame, output_file: s
 
 if __name__ == "__main__":
     # run_sc_command("sc broker overview", "overview.json")         # useless
-    #run_sc_command("sc broker analytics", "analytics.json")
+    # run_sc_command("sc broker analytics", "analytics.json")
     #run_sc_command("sc broker transactions", "transactions.json")  # implemented as function
     #run_sc_command("sc broker holdings", "holdings.json")          # implemented as function
 
-    holdings_df = get_holdings()
-    transactions_df = get_associated_transactions(holdings_df)
-    irr_df = irr(holdings_df, transactions_df)
-    print(irr_df)
+    if 0:
+        holdings_df = get_holdings()
+        transactions_df = get_associated_transactions(holdings_df)
+        irr_df = irr(holdings_df, transactions_df)
+        print(irr_df)
+
+    run_sc_command("sc broker analytics", "analytics.json")

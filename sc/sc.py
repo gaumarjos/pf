@@ -1,3 +1,6 @@
+# https://github.com/ScalableCapital/scalable-cli/blob/main/README.md
+
+
 import subprocess
 import json
 import os
@@ -17,6 +20,72 @@ SC_TOKEN = os.environ.get("SC_TOKEN")  # TODO: find where the CLI stores the aut
 
 def _path(filename: str) -> str:
     return os.path.join(SC_DIR, filename)
+
+
+def get_analytics(output_file: str = "analytics") -> str:
+    result = subprocess.run(["sc", "broker", "analytics"], capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    with open(_path(f"{output_file}.json"), "w") as f:
+        json.dump(data, f, indent=2)
+
+    r = data["result"]
+
+    lines = ["# Portfolio Analytics\n"]
+
+    # Allocations
+    lines.append("## Allocations")
+    for alloc in r["allocations"]:
+        for pos in alloc["positions"]:
+            lines.append(f"\n**{pos['name'].upper()}** — total valuation: €{pos['valuation']:,.2f}")
+            for c in sorted(pos["contributors"], key=lambda x: x["weight"], reverse=True):
+                asset = c["underlying_asset"]
+                lines.append(f"- {asset['name']} ({asset['isin']}): {c['weight']*100:.1f}%  (qty: {asset['filled_quantity']})")
+
+    # Health checks
+    lines.append("\n## Health Checks")
+    for hc in r["health_checks"]:
+        lines.append(f"- **{hc['type']}**: {hc['state']} — score {hc['health_score']} ({hc['number_of_items_in_portfolio']}/{hc['max_items']} items)")
+
+    # Coverage & invalid securities
+    lines.append(f"\n## Portfolio Coverage")
+    lines.append(f"{r['portfolio_coverage']*100:.1f}% of the portfolio is covered by analytics.")
+    if r["invalid_securities"]:
+        lines.append(f"\nThe following {r['invalid_securities_count']} holding(s) are excluded (unsupported security type):")
+        for s in r["invalid_securities"]:
+            lines.append(f"- {s['name']} ({s['isin']}) — type: {s['security_type']}")
+
+    # Payments
+    lines.append("\n## Payments")
+    p = r["payments"]
+    lines.append(f"- Total distributions (dividends): €{p['total_distributions']:,.2f}")
+    lines.append(f"- Total interest: €{p['total_interest']:,.2f}")
+
+    # Scenarios
+    lines.append("\n## Stress Test Scenarios")
+    lines.append("> Note: the `securities` list in each scenario is of **uncertain meaning** — could be benchmark constituents, scenario outperformers, or hedge suggestions. Needs clarification.\n")
+    scenario_labels = {
+        "EURO_INFLATION_UP": "Euro inflation up",
+        "US_RATES_UP": "US rates up",
+        "EURO_RATES_UP": "Euro rates up",
+        "EURO_MARKET_DOWN": "Euro market down",
+        "WORLD_DOWN": "World down",
+    }
+    for s in r["scenarios"]:
+        label = scenario_labels.get(s["type"], s["type"])
+        pp = s["portfolio_performance"] * 100
+        bp = s["benchmark_performance"] * 100
+        verdict = "outperforms" if pp > bp else "underperforms"
+        lines.append(f"### {label}")
+        lines.append(f"- Portfolio: {pp:+.2f}%  |  Benchmark: {bp:+.2f}%  → portfolio **{verdict}** benchmark")
+        lines.append(f"- Associated securities: {', '.join(s2['name'] for s2 in s['securities'])}")
+
+    # Last updated
+    lines.append(f"\n---\n_Last updated: {r['last_updated_utc']}_")
+
+    md = "\n".join(lines)
+    with open(_path(f"{output_file}.md"), "w") as f:
+        f.write(md)
+    return md
 
 
 def download_document(doc_id: str, label: str, output_dir: str = "documents") -> str:
@@ -114,4 +183,4 @@ if __name__ == "__main__":
         irr_df = irr(holdings_df, transactions_df)
         print(irr_df)
 
-    run_sc_command("sc broker analytics", "analytics.json")
+    get_analytics()

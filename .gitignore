@@ -8,3 +8,4 @@ montecarlo/scenarios/*.toml
 .env
 sc/*.json
 sc/*.csv
+sc/*.md

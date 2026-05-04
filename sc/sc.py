@@ -6,6 +6,7 @@ import json
 import os
 import requests
 import pandas as pd
+import xlwings as xw
 from dotenv import load_dotenv
 from scipy.optimize import brentq
 
@@ -16,6 +17,7 @@ ACCOUNT_ID = os.environ["ACCOUNT_ID"]
 PORTFOLIO_ID = os.environ["PORTFOLIO_ID"]
 SC_BASE_URL = "https://de.scalable.capital"
 SC_TOKEN = os.environ.get("SC_TOKEN")  # TODO: find where the CLI stores the auth token
+PF_SPREADSHEET = os.environ["PF_SPREADSHEET"]
 
 
 def _path(filename: str) -> str:
@@ -110,16 +112,73 @@ def run_sc_command(command: str, output_file: str) -> None:
         json.dump(data, f, indent=2)
 
 
-def get_holdings(output_file: str = "holdings") -> pd.DataFrame:
+def get_holdings(output_file: str = "holdings", dry_run: bool = False) -> pd.DataFrame:
     result = subprocess.run(["sc", "broker", "holdings"], capture_output=True, text=True)
     data = json.loads(result.stdout)
     if data["account_id"] != ACCOUNT_ID or data["result"]["portfolio_id"] != PORTFOLIO_ID:
         raise ValueError(f"Response account/portfolio does not match requested ids")
-    with open(_path(f"{output_file}.json"), "w") as f:
-        json.dump(data, f, indent=2)
     df = pd.DataFrame(data["result"]["items"])
-    df.to_csv(_path(f"{output_file}.csv"), index=False)
+
+    csv_path = _path(f"{output_file}.csv")
+    if os.path.exists(csv_path):
+        old_df = pd.read_csv(csv_path)
+        old_vals = old_df.set_index("isin")["valuation"] if "isin" in old_df.columns and "valuation" in old_df.columns else pd.Series(dtype=float)
+        new_vals = df.set_index("isin")["valuation"]
+        new_names = df.set_index("isin")["name"]
+        for isin in new_vals.index.union(old_vals.index):
+            name = new_names.get(isin, old_df.set_index("isin")["name"].get(isin, isin) if "name" in old_df.columns else isin)
+            if isin not in old_vals.index:
+                print(f"INFO: {name} ({isin}) added to holdings")
+            elif isin not in new_vals.index:
+                print(f"INFO: {name} ({isin}) removed from holdings")
+            elif old_vals[isin] != new_vals[isin]:
+                print(f"INFO: {name} ({isin}) valuation changed {old_vals[isin]:,.2f} → {new_vals[isin]:,.2f}")
+
+    if not dry_run:
+        with open(_path(f"{output_file}.json"), "w") as f:
+            json.dump(data, f, indent=2)
+        df.to_csv(csv_path, index=False)
+
+    view = df[["name", "isin", "valuation"]].copy()
+    total = pd.DataFrame([{"name": "TOTAL", "isin": "", "valuation": view["valuation"].sum()}])
+    print(pd.concat([view, total], ignore_index=True).to_string(index=False))
     return df
+
+
+def update_pf_spreadsheet(holdings_csv: str, xlsx_path: str, start_row: int = 5, end_row: int = 70, dry_run: bool = False) -> None:
+    holdings_df = pd.read_csv(holdings_csv)
+    holdings_map = dict(zip(holdings_df["isin"], zip(holdings_df["name"], holdings_df["valuation"])))
+
+    wb = xw.Book(xlsx_path)
+    ws = wb.sheets.active
+
+    excel_isins = {}
+    for row in range(start_row, end_row + 1):
+        isin = ws.range(f"H{row}").value
+        if isin:
+            excel_isins[isin] = row
+
+    for isin, (name, valuation) in holdings_map.items():
+        if isin not in excel_isins:
+            print(f"WARNING: {name} ({isin}) from holdings not found in spreadsheet (rows {start_row}–{end_row})")
+        else:
+            old_val = ws.range(f"O{excel_isins[isin]}").value
+            if old_val != valuation:
+                delta = valuation - old_val
+                print(f"INFO: {name} ({isin}) valuation changed {old_val:,.2f} → {valuation:,.2f} ({delta:+,.2f})")
+            if not dry_run:
+                ws.range(f"O{excel_isins[isin]}").value = valuation
+
+    for isin, row in excel_isins.items():
+        if isin not in holdings_map:
+            print(f"WARNING: {isin} found in spreadsheet (row {row}) but not in holdings")
+
+    if not dry_run:
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        ws.range("O2").value = f"Updated from script on {ts}"
+        wb.save()
+    wb.close()
 
 
 def get_associated_transactions(holdings_df: pd.DataFrame, output_file: str = "transactions") -> pd.DataFrame:
@@ -173,14 +232,18 @@ def irr(holdings_df: pd.DataFrame, transactions_df: pd.DataFrame, output_file: s
 
 if __name__ == "__main__":
     # run_sc_command("sc broker overview", "overview.json")         # useless
-    # run_sc_command("sc broker analytics", "analytics.json")
-    #run_sc_command("sc broker transactions", "transactions.json")  # implemented as function
-    #run_sc_command("sc broker holdings", "holdings.json")          # implemented as function
 
-    if 0:
-        holdings_df = get_holdings()
+    get_updates_from_sc = 0
+    write_pf_spreadsheet = 0
+
+    if get_updates_from_sc:
+        holdings_df = get_holdings(dry_run=False)
         transactions_df = get_associated_transactions(holdings_df)
         irr_df = irr(holdings_df, transactions_df)
         print(irr_df)
 
-    get_analytics()
+        # Update analytics.md, not really useful, just doing it because it's there
+        get_analytics()
+
+    if write_pf_spreadsheet:
+        update_pf_spreadsheet("holdings.csv", PF_SPREADSHEET, dry_run=False)

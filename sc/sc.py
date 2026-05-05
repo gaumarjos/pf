@@ -119,6 +119,8 @@ def get_holdings(output_file: str = "holdings", dry_run: bool = False) -> pd.Dat
         raise ValueError(f"Response account/portfolio does not match requested ids")
     df = pd.DataFrame(data["result"]["items"])
 
+    print("")
+    print("RETRIEVING UPDATED HOLDINGS")
     csv_path = _path(f"{output_file}.csv")
     if os.path.exists(csv_path):
         old_df = pd.read_csv(csv_path)
@@ -132,20 +134,22 @@ def get_holdings(output_file: str = "holdings", dry_run: bool = False) -> pd.Dat
             elif isin not in new_vals.index:
                 print(f"INFO: {name} ({isin}) removed from holdings")
             elif old_vals[isin] != new_vals[isin]:
-                print(f"INFO: {name} ({isin}) valuation changed {old_vals[isin]:,.2f} → {new_vals[isin]:,.2f}")
+                print(f"INFO: {name} ({isin}) valuation changed {old_vals[isin]:,.2f} → {new_vals[isin]:,.2f} ({new_vals[isin] - old_vals[isin]:+,.2f})")
 
     if not dry_run:
         with open(_path(f"{output_file}.json"), "w") as f:
             json.dump(data, f, indent=2)
         df.to_csv(csv_path, index=False)
 
+    print("")
+    print("UPDATED HOLDINGS")
     view = df[["name", "isin", "valuation"]].copy()
     total = pd.DataFrame([{"name": "TOTAL", "isin": "", "valuation": view["valuation"].sum()}])
     print(pd.concat([view, total], ignore_index=True).to_string(index=False))
     return df
 
 
-def update_pf_spreadsheet(holdings_csv: str, xlsx_path: str, start_row: int = 5, end_row: int = 70, dry_run: bool = False) -> None:
+def update_pf_spreadsheet(holdings_csv: str, xlsx_path: str, start_row: int = 5, end_row: int = 20, dry_run: bool = False) -> None:
     holdings_df = pd.read_csv(holdings_csv)
     holdings_map = dict(zip(holdings_df["isin"], zip(holdings_df["name"], holdings_df["valuation"])))
 
@@ -198,8 +202,10 @@ def get_associated_transactions(holdings_df: pd.DataFrame, output_file: str = "t
 def irr(holdings_df: pd.DataFrame, transactions_df: pd.DataFrame, output_file: str = "irr") -> pd.DataFrame:
     today = pd.Timestamp.today().normalize()
     transactions_df = transactions_df.copy()
-    transactions_df["date"] = pd.to_datetime(transactions_df["last_event_datetime"], utc=True).dt.tz_localize(None)
+    transactions_df["date"] = pd.to_datetime(transactions_df["last_event_datetime"], utc=True).dt.tz_convert(None).dt.normalize()
 
+    print("")
+    print("IRR")
     results = []
     for _, holding in holdings_df.iterrows():
         isin = holding["isin"]
@@ -233,7 +239,7 @@ def irr(holdings_df: pd.DataFrame, transactions_df: pd.DataFrame, output_file: s
 if __name__ == "__main__":
     # run_sc_command("sc broker overview", "overview.json")         # useless
 
-    get_updates_from_sc = 0
+    get_updates_from_sc = 1
     write_pf_spreadsheet = 0
 
     if get_updates_from_sc:
